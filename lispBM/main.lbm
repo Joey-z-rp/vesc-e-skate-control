@@ -1,0 +1,22 @@
+(def CMD_BEEP 1)
+
+(defun proc-data (data)
+    (if (= (bufget-u8 data 0) CMD_BEEP) {
+        (foc-play-tone 0 350 2)
+        (sleep 0.1)
+        (foc-play-stop)
+    })
+)
+
+(defun event-handler ()
+    (loopwhile t
+        (recv
+            ((event-data-rx . (? data)) (proc-data data))
+            (_ nil) ; Ignore other events
+)))
+
+; Spawn the event handler thread and pass the ID it returns to C
+(event-register-handler (spawn event-handler))
+
+; Enable the custom app data event
+(event-enable 'event-data-rx)
