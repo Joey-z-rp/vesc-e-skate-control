@@ -1,10 +1,13 @@
 (def GESTURE-LO 0.03)
 (def GESTURE-HI 0.2)
 (def GESTURE-WINDOW 1.0)
+(def MAX-ERPM 10000.0)
+(def SPEED-VOL-SCALE 2.0)
 
 (def throttle 0)
 (def prev-throttle 0)
 (def last-gesture-time -1)
+(def gesture-vol 0)
 
 (defun in-gesture-band (val)
     (and (>= val GESTURE-LO) (<= val GESTURE-HI))
@@ -28,11 +31,13 @@
 })
 
 (defun play-gesture-tone () {
-        (var vol 2)
-        (play-tone 0 349.23 0.2 vol)
-        (play-tone 0 440 0.2 vol)
-        (play-tone 0 523.25 0.2 vol)
-        (play-tone 0 659.25 0.2 vol)
+        (var rpm-ratio (/ (abs (get-rpm)) MAX-ERPM))
+        (var speed-factor (+ 1.0 (* (if (< rpm-ratio 1.0) rpm-ratio 1.0) SPEED-VOL-SCALE)))
+        (setq gesture-vol (* 2 speed-factor))
+        (play-tone 0 349.23 0.2 gesture-vol)
+        (play-tone 0 440 0.2 gesture-vol)
+        (play-tone 0 523.25 0.2 gesture-vol)
+        (play-tone 0 659.25 0.2 gesture-vol)
         (foc-play-stop)
 })
 
