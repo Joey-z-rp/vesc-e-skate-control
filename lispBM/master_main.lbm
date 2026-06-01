@@ -1,0 +1,59 @@
+(def GESTURE-LO 0.03)
+(def GESTURE-HI 0.2)
+(def GESTURE-WINDOW 1.0)
+
+(def throttle 0)
+(def prev-throttle 0)
+(def last-gesture-time -1)
+
+(defun in-gesture-band (val)
+    (and (>= val GESTURE-LO) (<= val GESTURE-HI))
+)
+
+(defun gesture-edge (prev curr)
+    (and (in-gesture-band curr) (< prev GESTURE-LO))
+)
+
+(defun read-throttle () {
+        (var rs (get-remote-state))
+        (if rs (def throttle (ix rs 0)) nil)
+})
+
+(defun play-gesture-tone () {
+        (foc-play-tone 0 500 2)
+        (sleep 0.1)
+        (foc-play-stop)
+})
+
+(defun on-gesture () {
+        (if (> last-gesture-time 0) {
+                (if (<= (secs-since last-gesture-time) GESTURE-WINDOW) {
+                        (play-gesture-tone)
+                        (def last-gesture-time -1)
+                } {
+                        (def last-gesture-time (systime))
+                })
+        } {
+                (def last-gesture-time (systime))
+        })
+})
+
+(defun throttle-loop () {
+        (loopwhile t {
+                (def prev-throttle throttle)
+                (read-throttle)
+
+                (if (and (> last-gesture-time 0)
+                         (> (secs-since last-gesture-time) GESTURE-WINDOW))
+                    (def last-gesture-time -1)
+                )
+
+                (if (gesture-edge prev-throttle throttle)
+                    (on-gesture)
+                    nil
+                )
+                (sleep 0.02)
+        })
+})
+
+(spawn throttle-loop)
