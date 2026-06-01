@@ -19,9 +19,20 @@
         (if rs (def throttle (ix rs 0)) nil)
 })
 
+(defun play-tone (ch freq time vol) {
+        (looprange i 0 10 {
+                (setq vol (* vol 0.9))
+                (foc-play-tone ch freq vol)
+                (sleep (/ time 10.0))
+        })
+})
+
 (defun play-gesture-tone () {
-        (foc-play-tone 0 500 2)
-        (sleep 0.1)
+        (var vol 2)
+        (play-tone 0 349.23 0.2 vol)
+        (play-tone 0 440 0.2 vol)
+        (play-tone 0 523.25 0.2 vol)
+        (play-tone 0 659.25 0.2 vol)
         (foc-play-stop)
 })
 
