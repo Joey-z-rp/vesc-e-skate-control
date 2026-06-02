@@ -4,9 +4,13 @@
 (def MAX-ERPM 10000.0)
 (def SPEED-VOL-SCALE 2.0)
 
+(def SLAVE_CAN_ID 3)
+(def CMD_TOGGLE_PARKING_BRAKE 2)
+
 (def throttle 0)
 (def prev-throttle 0)
 (def last-gesture-time -1)
+(def last-brake-gesture-time -1)
 (def gesture-vol 0)
 
 (defun in-gesture-band (val)
@@ -15,6 +19,14 @@
 
 (defun gesture-edge (prev curr)
     (and (in-gesture-band curr) (< prev GESTURE-LO))
+)
+
+(defun in-negative-gesture-band (val)
+    (and (<= val (- 0.0 GESTURE-LO)) (>= val (- 0.0 GESTURE-HI)))
+)
+
+(defun negative-gesture-edge (prev curr)
+    (and (in-negative-gesture-band curr) (> prev (- 0.0 GESTURE-LO)))
 )
 
 (defun read-throttle () {
@@ -41,6 +53,19 @@
         (foc-play-stop)
 })
 
+(defun on-brake-gesture () {
+        (if (> last-brake-gesture-time 0) {
+                (if (<= (secs-since last-brake-gesture-time) GESTURE-WINDOW) {
+                        (can-send-sid SLAVE_CAN_ID (list CMD_TOGGLE_PARKING_BRAKE))
+                        (def last-brake-gesture-time -1)
+                } {
+                        (def last-brake-gesture-time (systime))
+                })
+        } {
+                (def last-brake-gesture-time (systime))
+        })
+})
+
 (defun on-gesture () {
         (if (> last-gesture-time 0) {
                 (if (<= (secs-since last-gesture-time) GESTURE-WINDOW) {
@@ -64,10 +89,21 @@
                     (def last-gesture-time -1)
                 )
 
+                (if (and (> last-brake-gesture-time 0)
+                         (> (secs-since last-brake-gesture-time) GESTURE-WINDOW))
+                    (def last-brake-gesture-time -1)
+                )
+
                 (if (gesture-edge prev-throttle throttle)
                     (on-gesture)
                     nil
                 )
+
+                (if (negative-gesture-edge prev-throttle throttle)
+                    (on-brake-gesture)
+                    nil
+                )
+
                 (sleep 0.02)
         })
 })

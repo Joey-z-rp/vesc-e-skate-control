@@ -1,0 +1,69 @@
+(def CMD_SET_PARKING_BRAKE 1)
+(def CMD_TOGGLE_PARKING_BRAKE 2)
+
+(def parking-brake-active 0)
+(def prev-parking-brake-active 0)
+
+(defun play-parking-brake-tone (freq) {
+    (foc-play-tone 0 freq 1.5)
+    (sleep 0.1)
+    (foc-play-stop)
+})
+
+(defun send-state-to-ui () {
+    (var buf (bufcreate 2))
+    (bufset-u8 buf 0 CMD_SET_PARKING_BRAKE)
+    (bufset-u8 buf 1 parking-brake-active)
+    (send-data buf)
+})
+
+(defun proc-ui-data (data)
+    (if (= (bufget-u8 data 0) CMD_SET_PARKING_BRAKE)
+        (setq parking-brake-active (bufget-u8 data 1))
+    )
+)
+
+(defun proc-can-data (id data)
+    (if (and (= id (can-local-id)) (= (bufget-u8 data 0) CMD_TOGGLE_PARKING_BRAKE)) {
+        (setq parking-brake-active (if (= parking-brake-active 0) 1 0))
+        (send-state-to-ui)
+    })
+)
+
+(defun event-handler ()
+    (loopwhile t
+        (recv
+            ((event-data-rx . (? data)) (proc-ui-data data))
+            ((event-can-sid . ((? id) . (? data))) (proc-can-data id data))
+            (_ nil) ; Ignore other events
+)))
+
+; Spawn the event handler thread and pass the ID it returns to C
+(event-register-handler (spawn event-handler))
+
+; Enable the custom app data event
+(event-enable 'event-data-rx)
+(event-enable 'event-can-sid)
+
+; Periodically push state to QML
+(spawn (fn ()
+    (loopwhile t {
+        (send-state-to-ui)
+        (sleep 2)
+    })
+))
+
+; Main loop: react to parking brake state changes
+(loopwhile t {
+    (if (not (= parking-brake-active prev-parking-brake-active)) {
+        (if (= parking-brake-active 1) {
+            (play-parking-brake-tone 500)
+            ; TODO: apply brake
+        } {
+            (play-parking-brake-tone 700)
+            ; TODO: release brake
+        })
+        (setq prev-parking-brake-active parking-brake-active)
+    })
+    (sleep 0.05)
+})

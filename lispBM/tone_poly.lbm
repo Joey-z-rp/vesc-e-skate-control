@@ -49,7 +49,7 @@
   `(,quarter . (,C5 ,pause ,pause ,pause))
   `(,0.24 . (,C5 ,pause ,pause ,pause))
   `(,quarter . (,G5 ,C5 ,A4 ,E4))
-  `(,quarter . (,F5 ,D5 ,A4 ,D4))
+  `(,quarter-dot . (,F5 ,D5 ,A4 ,D4))
 ))
 
 (defun play-tone (time notes) {
@@ -73,3 +73,4 @@
 })
 
 (play song)
+(foc-play-stop)
