@@ -2,11 +2,12 @@
 (def CMD_TOGGLE_PARKING_BRAKE 2)
 
 (def BRAKE_MAX_SPEED 0.3)    ; m/s — max speed to allow activation
-(def BRAKE_MAX_CURRENT 10.0)  ; A
+(def BRAKE_MAX_CURRENT 30.0)  ; A
 (def BRAKE_DT 0.05)          ; s — main loop period
 (def BRAKE_RPM_DEADBAND 10.0); RPM — ignore hall noise below this
 (def BRAKE_PITCH_GAIN 15)   ; A/rad — feedforward from slope, tune for board weight
-(def BRAKE_KI 0.01)         ; A/(RPM*s) — slow trim on top of feedforward
+(def BRAKE_KP 0.01)         ; A/RPM — velocity damping, reduces oscillation
+(def BRAKE_KI 0.02)         ; A/(RPM*s) — slow trim on top of feedforward
 (def MASTER_CAN_ID 2)
 
 (def parking-brake-active 0)
@@ -35,9 +36,15 @@
 )
 
 (defun proc-can-data (id data)
-    (if (and (= id (can-local-id)) (= (bufget-u8 data 0) CMD_TOGGLE_PARKING_BRAKE)) {
-        (setq parking-brake-active (if (= parking-brake-active 0) 1 0))
-        (send-state-to-ui)
+    (if (= id (can-local-id)) {
+        (var cmd (bufget-u8 data 0))
+        (if (= cmd CMD_TOGGLE_PARKING_BRAKE) {
+            (setq parking-brake-active (if (= parking-brake-active 0) 1 0))
+            (send-state-to-ui)
+        })
+        (if (= cmd CMD_SET_PARKING_BRAKE)
+            (setq parking-brake-active (bufget-u8 data 1))
+        )
     })
 )
 
@@ -76,11 +83,11 @@
                 (send-state-to-ui)
             })
         } {
-            (can-cmd MASTER_CAN_ID "(app-disable-output 0)")
             (set-current 0)
             (canset-current MASTER_CAN_ID 0)
             (setq hold-current 0.0)
             (setq pid-integral 0.0)
+            (can-cmd MASTER_CAN_ID "(app-disable-output 0)")
             (play-parking-brake-tone 700)
         })
         (setq prev-parking-brake-active parking-brake-active)
@@ -99,7 +106,7 @@
         (if (> pid-integral integral-max) (setq pid-integral integral-max))
         (if (< pid-integral (- 0.0 integral-max)) (setq pid-integral (- 0.0 integral-max)))
 
-        (setq hold-current (+ base-current (* BRAKE_KI pid-integral)))
+        (setq hold-current (+ base-current (* BRAKE_KP rpm-err) (* BRAKE_KI pid-integral)))
 
         (if (> hold-current BRAKE_MAX_CURRENT) (setq hold-current BRAKE_MAX_CURRENT))
         (if (< hold-current (- 0.0 BRAKE_MAX_CURRENT)) (setq hold-current (- 0.0 BRAKE_MAX_CURRENT)))

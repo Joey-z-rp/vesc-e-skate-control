@@ -5,12 +5,14 @@
 (def SPEED-VOL-SCALE 2.0)
 
 (def SLAVE_CAN_ID 3)
+(def CMD_SET_PARKING_BRAKE 1)
 (def CMD_TOGGLE_PARKING_BRAKE 2)
 
 (def throttle 0)
 (def prev-throttle 0)
 (def last-gesture-time -1)
 (def last-brake-gesture-time -1)
+(def brake-release-armed 1)
 (def gesture-vol 0)
 
 (defun in-gesture-band (val)
@@ -103,6 +105,16 @@
                     (on-brake-gesture)
                     nil
                 )
+
+                (if (< (abs throttle) GESTURE-LO)
+                    (def brake-release-armed 1)
+                )
+
+                (if (and (or (> throttle 0.15) (< throttle -0.5))
+                         (= brake-release-armed 1)) {
+                    (can-send-sid SLAVE_CAN_ID (list CMD_SET_PARKING_BRAKE 0))
+                    (def brake-release-armed 0)
+                })
 
                 (sleep 0.02)
         })
