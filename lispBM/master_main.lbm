@@ -7,6 +7,7 @@
 (def SLAVE_CAN_ID 3)
 (def CMD_SET_PARKING_BRAKE 1)
 (def CMD_TOGGLE_PARKING_BRAKE 2)
+(def CMD_THROTTLE 4)
 
 (def throttle 0)
 (def prev-throttle 0)
@@ -82,9 +83,15 @@
 })
 
 (defun throttle-loop () {
+        (var tbuf (bufcreate 3))
+        (bufset-u8 tbuf 0 CMD_THROTTLE)
         (loopwhile t {
                 (def prev-throttle throttle)
                 (read-throttle)
+
+                ; Forward raw throttle to slave for torque vectoring (i16, scale 10000 = 0.01% resolution)
+                (bufset-i16 tbuf 1 (* throttle 10000))
+                (can-send-sid SLAVE_CAN_ID tbuf)
 
                 (if (and (> last-gesture-time 0)
                          (> (secs-since last-gesture-time) GESTURE-WINDOW))
