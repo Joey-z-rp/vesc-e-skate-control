@@ -96,10 +96,11 @@
     (var BRAKE_KI 0.02)         ; A/(RPM*s) — slow trim on top of feedforward
     (var TV_THROTTLE_DEADBAND 0.15) ; matches remote deadband
     (var TV_MIN_ROLL 0.1)       ; rad — minimum lean to apply differential
-    (var TV_MAX_SPEED 6.0)      ; m/s — differential disabled above this speed
+    (var TV_MAX_SPEED 7.0)      ; m/s — differential disabled above this speed
     (var TV_K 2.0)              ; yaw scalar (inflate slightly to detect understeer)
     (var TV_G 0.005)            ; 1/(deg/s) — proportional gain on yaw error (relative units)
-    (var TV_MAX_DELTA 0.5)      ; max delta as a fraction of intended current (0.5 = ±50%)
+    (var TV_MAX_DELTA 0.7)      ; max delta as a fraction of intended current (0.5 = ±50%)
+    (var TV_SLIP_THRESHOLD 1.7) ; m/s — speed difference between wheels indicating slip
     (var prev-parking-brake-active 0)
     (var pid-integral 0.0)
     (var prev-tv-running 0)
@@ -149,12 +150,16 @@
 
         ; --- Torque vectoring ---
         (var roll (ix (get-imu-rpy) 0))
-        (var velocity (get-speed))
+        (var left-speed (get-speed))
+        (var right-speed (canget-speed MASTER_CAN_ID))
+        (var velocity (if (> (abs (- left-speed right-speed)) TV_SLIP_THRESHOLD)
+                          (if (< (abs left-speed) (abs right-speed)) left-speed right-speed)
+                          (/ (+ left-speed right-speed) 2.0)))
         (var tv-running (if (and (= torque-vector-active 1)
                                  (= parking-brake-active 0)
                                  (> (abs roll) TV_MIN_ROLL)
                                  (< (abs velocity) TV_MAX_SPEED)
-                                 (> throttle 0.15)) 1 0))
+                                 (> throttle TV_THROTTLE_DEADBAND)) 1 0))
 
         (if (not (= tv-running prev-tv-running)) {
             (if (= tv-running 0) {

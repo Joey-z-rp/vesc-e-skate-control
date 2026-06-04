@@ -15,6 +15,11 @@ Item {
     property real leftPct: 0.0
     property real rightPct: 0.0
 
+    // 100% when TV not applying, actual value when applying
+    property int displayLeftPct:  torqueVectorActive ? (leftPct  !== 0 ? leftPct  : 100) : 100
+    property int displayRightPct: torqueVectorActive ? (rightPct !== 0 ? rightPct : 100) : 100
+    property color wheelColor: torqueVectorActive ? "#4CAF50" : "#666666"
+
     function sendParkingBrakeCmd(active) {
         var buffer = new ArrayBuffer(2)
         var dv = new DataView(buffer)
@@ -90,31 +95,85 @@ Item {
             }
         }
 
-        RowLayout {
+        // Wheel visualisation — rear view of the board
+        Item {
             Layout.fillWidth: true
-            visible: container.torqueVectorActive
+            height: 110
 
-            Label {
-                text: "Left"
-                font.pixelSize: 14
-                color: "#888"
-            }
-            Label {
-                text: container.leftPct + "%"
-                font.pixelSize: 14
-            }
+            Row {
+                anchors.centerIn: parent
+                spacing: 0
 
-            Item { Layout.fillWidth: true }
+                // Left wheel
+                Rectangle {
+                    width: 34
+                    height: 90
+                    radius: 7
+                    color: container.wheelColor
 
-            Label {
-                text: "Right"
-                font.pixelSize: 14
-                color: "#888"
-            }
-            Label {
-                text: container.rightPct + "%"
-                font.pixelSize: 14
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 4
+                        Label {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "L"
+                            font.pixelSize: 10
+                            color: "#ffffff"
+                            opacity: 0.6
+                        }
+                        Label {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: container.displayLeftPct + "%"
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+                    }
+                }
+
+                // Board deck
+                Item {
+                    width: 88
+                    height: 90
+
+                    Rectangle {
+                        width: parent.width
+                        height: 22
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: "#444444"
+                        radius: 4
+                    }
+                }
+
+                // Right wheel
+                Rectangle {
+                    width: 34
+                    height: 90
+                    radius: 7
+                    color: container.wheelColor
+
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 4
+                        Label {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "R"
+                            font.pixelSize: 10
+                            color: "#ffffff"
+                            opacity: 0.6
+                        }
+                        Label {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: container.displayRightPct + "%"
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+                    }
+                }
             }
         }
+
+        Item { Layout.fillHeight: true }
     }
 }
