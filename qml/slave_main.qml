@@ -18,13 +18,6 @@ Item {
     property real tvG: 0.005
     property bool absActive: false
     property bool absEngaged: false
-    property bool absEngagedDisplay: false
-
-    Timer {
-        id: absLatchTimer
-        interval: 500
-        onTriggered: container.absEngagedDisplay = false
-    }
 
     // 100% when TV not applying, actual value when applying
     property int displayLeftPct:  torqueVectorActive ? (leftPct  !== 0 ? leftPct  : 100) : 100
@@ -77,10 +70,6 @@ Item {
             container.rightPct = dv.getInt16(5)
             container.absActive = dv.getUint8(7) !== 0
             container.absEngaged = dv.getUint8(8) !== 0
-            if (container.absEngaged) {
-                container.absEngagedDisplay = true
-                absLatchTimer.restart()
-            }
         }
     }
 
@@ -135,10 +124,10 @@ Item {
             }
 
             Label {
-                text: container.absEngagedDisplay ? "ACTIVE" : "READY"
+                text: container.absEngaged ? "ACTIVE" : "READY"
                 font.pixelSize: 12
                 font.bold: container.absEngaged
-                color: container.absEngagedDisplay ? "#e53935" : "#888"
+                color: container.absEngaged ? "#e53935" : "#888"
             }
 
             Item { Layout.fillWidth: true }
