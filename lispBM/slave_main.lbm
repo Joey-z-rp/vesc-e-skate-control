@@ -13,8 +13,8 @@
 (def throttle 0.0)       ; latest throttle from master via CAN
 (def tv-left-pct 0.0)   ; slave motor output as % of intended throttle current
 (def tv-right-pct 0.0)  ; master motor output as % of intended throttle current
-(def TV_K 2.0)          ; yaw scalar — tunable from UI
-(def TV_G 0.005)        ; proportional gain — tunable from UI
+(def TV_K 0.1)          ; yaw scalar — tunable from UI
+(def TV_G 0.001)        ; proportional gain — tunable from UI
 (def abs-active 0)
 (def abs-engaged-ui 0) ; latched for display — holds high for 500ms after last slip
 
@@ -45,7 +45,7 @@
         (setq torque-vector-active (bufget-u8 data 1))
     )
     (if (= cmd CMD_SET_TV_PARAMS) {
-        (setq TV_K (/ (bufget-i16 data 1) 10.0))
+        (setq TV_K (/ (bufget-i16 data 1) 100.0))
         (setq TV_G (/ (bufget-i16 data 3) 10000.0))
     })
     (if (= cmd CMD_SET_ABS)
@@ -105,7 +105,7 @@
     (var THROTTLE_DEADBAND 0.15) ; matches remote deadband
     (var TV_MIN_ROLL 0.1)       ; rad — minimum lean to apply differential
     (var TV_MAX_SPEED 7.0)      ; m/s — differential disabled above this speed
-    (var TV_MAX_DELTA 0.8)      ; max delta as a fraction of intended current (0.5 = ±50%)
+    (var TV_MAX_DELTA 0.5)      ; max delta as a fraction of intended current (0.5 = ±50%)
     (var TV_SLIP_THRESHOLD 1.7) ; m/s — speed difference between wheels indicating slip
     (var ABS_THRESHOLD 0.1)      ; m/s — per-wheel speed error to trigger brake release
     (var ABS_GRIP_MARGIN 1)    ; m/s² — allowed excess over IMU decel before trusting IMU

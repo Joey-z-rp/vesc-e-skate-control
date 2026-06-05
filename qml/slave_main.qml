@@ -14,8 +14,8 @@ Item {
     property bool torqueVectorActive: false
     property real leftPct: 0.0
     property real rightPct: 0.0
-    property real tvK: 2.0
-    property real tvG: 0.005
+    property real tvK: 0.1
+    property real tvG: 0.001
     property bool absActive: false
     property bool absEngaged: false
 
@@ -44,7 +44,7 @@ Item {
         var buffer = new ArrayBuffer(5)
         var dv = new DataView(buffer)
         dv.setUint8(0, 6) // CMD_SET_TV_PARAMS
-        dv.setInt16(1, Math.round(container.tvK * 10))
+        dv.setInt16(1, Math.round(container.tvK * 100))
         dv.setInt16(3, Math.round(container.tvG * 10000))
         mCommands.sendCustomAppData(buffer)
     }
@@ -227,7 +227,7 @@ Item {
             Label { text: "K"; font.pixelSize: 14; color: "#888" }
             Slider {
                 id: kSlider
-                from: 0.0; to: 10.0; stepSize: 0.1
+                from: 0.0; to: 1.0; stepSize: 0.01
                 value: container.tvK
                 Layout.fillWidth: true
                 onMoved: {
@@ -236,7 +236,7 @@ Item {
                 }
             }
             Label {
-                text: container.tvK.toFixed(1)
+                text: container.tvK.toFixed(2)
                 font.pixelSize: 14
                 horizontalAlignment: Text.AlignRight
             }
@@ -248,7 +248,7 @@ Item {
             Label { text: "G"; font.pixelSize: 14; color: "#888" }
             Slider {
                 id: gSlider
-                from: 0.0; to: 0.05; stepSize: 0.001
+                from: 0.0; to: 0.01; stepSize: 0.0001
                 value: container.tvG
                 Layout.fillWidth: true
                 onMoved: {
@@ -257,7 +257,7 @@ Item {
                 }
             }
             Label {
-                text: container.tvG.toFixed(3)
+                text: container.tvG.toFixed(4)
                 font.pixelSize: 14
                 horizontalAlignment: Text.AlignRight
             }
