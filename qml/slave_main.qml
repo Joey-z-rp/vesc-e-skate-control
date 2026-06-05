@@ -14,6 +14,17 @@ Item {
     property bool torqueVectorActive: false
     property real leftPct: 0.0
     property real rightPct: 0.0
+    property real tvK: 2.0
+    property real tvG: 0.005
+    property bool absActive: false
+    property bool absEngaged: false
+    property bool absEngagedDisplay: false
+
+    Timer {
+        id: absLatchTimer
+        interval: 500
+        onTriggered: container.absEngagedDisplay = false
+    }
 
     // 100% when TV not applying, actual value when applying
     property int displayLeftPct:  torqueVectorActive ? (leftPct  !== 0 ? leftPct  : 100) : 100
@@ -25,6 +36,23 @@ Item {
         var dv = new DataView(buffer)
         dv.setUint8(0, 1) // CMD_SET_PARKING_BRAKE
         dv.setUint8(1, active ? 1 : 0)
+        mCommands.sendCustomAppData(buffer)
+    }
+
+    function sendAbsCmd(active) {
+        var buffer = new ArrayBuffer(2)
+        var dv = new DataView(buffer)
+        dv.setUint8(0, 7) // CMD_SET_ABS
+        dv.setUint8(1, active ? 1 : 0)
+        mCommands.sendCustomAppData(buffer)
+    }
+
+    function sendTvParams() {
+        var buffer = new ArrayBuffer(5)
+        var dv = new DataView(buffer)
+        dv.setUint8(0, 6) // CMD_SET_TV_PARAMS
+        dv.setInt16(1, Math.round(container.tvK * 10))
+        dv.setInt16(3, Math.round(container.tvG * 10000))
         mCommands.sendCustomAppData(buffer)
     }
 
@@ -40,15 +68,18 @@ Item {
         target: mCommands
         function onCustomAppDataReceived(data) {
             var dv = new DataView(data)
-            var cmd = dv.getUint8(0)
-            if (cmd === 1) { // CMD_SET_PARKING_BRAKE
-                container.parkingBrakeActive = dv.getUint8(1) !== 0
-                parkingBrakeSwitch.checked = container.parkingBrakeActive
-            } else if (cmd === 5) { // CMD_TV_STATE
-                container.torqueVectorActive = dv.getUint8(1) !== 0
-                torqueVectorSwitch.checked = container.torqueVectorActive
-                container.leftPct = dv.getInt16(2)
-                container.rightPct = dv.getInt16(4)
+            if (dv.getUint8(0) !== 5) return // CMD_TV_STATE
+            container.parkingBrakeActive = dv.getUint8(1) !== 0
+            parkingBrakeSwitch.checked = container.parkingBrakeActive
+            container.torqueVectorActive = dv.getUint8(2) !== 0
+            torqueVectorSwitch.checked = container.torqueVectorActive
+            container.leftPct = dv.getInt16(3)
+            container.rightPct = dv.getInt16(5)
+            container.absActive = dv.getUint8(7) !== 0
+            container.absEngaged = dv.getUint8(8) !== 0
+            if (container.absEngaged) {
+                container.absEngagedDisplay = true
+                absLatchTimer.restart()
             }
         }
     }
@@ -91,6 +122,32 @@ Item {
                 onToggled: {
                     container.torqueVectorActive = checked
                     sendTorqueVectorCmd(checked)
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            Label {
+                text: "ABS"
+                font.pixelSize: 16
+            }
+
+            Label {
+                text: container.absEngagedDisplay ? "ACTIVE" : "READY"
+                font.pixelSize: 12
+                font.bold: container.absEngaged
+                color: container.absEngagedDisplay ? "#e53935" : "#888"
+            }
+
+            Item { Layout.fillWidth: true }
+
+            Switch {
+                id: absSwitch
+                onToggled: {
+                    container.absActive = checked
+                    sendAbsCmd(checked)
                 }
             }
         }
@@ -171,6 +228,49 @@ Item {
                         }
                     }
                 }
+            }
+        }
+
+        // TV tuning parameters
+        RowLayout {
+            Layout.fillWidth: true
+
+            Label { text: "K"; font.pixelSize: 14; color: "#888" }
+            Slider {
+                id: kSlider
+                from: 0.0; to: 10.0; stepSize: 0.1
+                value: container.tvK
+                Layout.fillWidth: true
+                onMoved: {
+                    container.tvK = value
+                    sendTvParams()
+                }
+            }
+            Label {
+                text: container.tvK.toFixed(1)
+                font.pixelSize: 14
+                horizontalAlignment: Text.AlignRight
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            Label { text: "G"; font.pixelSize: 14; color: "#888" }
+            Slider {
+                id: gSlider
+                from: 0.0; to: 0.05; stepSize: 0.001
+                value: container.tvG
+                Layout.fillWidth: true
+                onMoved: {
+                    container.tvG = value
+                    sendTvParams()
+                }
+            }
+            Label {
+                text: container.tvG.toFixed(3)
+                font.pixelSize: 14
+                horizontalAlignment: Text.AlignRight
             }
         }
 

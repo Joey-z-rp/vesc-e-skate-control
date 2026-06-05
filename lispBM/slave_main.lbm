@@ -3,6 +3,8 @@
 (def CMD_SET_TORQUE_VECTOR 3)
 (def CMD_THROTTLE 4)
 (def CMD_TV_STATE 5)
+(def CMD_SET_TV_PARAMS 6)
+(def CMD_SET_ABS 7)
 
 
 ; Globals shared across threads
@@ -11,6 +13,10 @@
 (def throttle 0.0)       ; latest throttle from master via CAN
 (def tv-left-pct 0.0)   ; slave motor output as % of intended throttle current
 (def tv-right-pct 0.0)  ; master motor output as % of intended throttle current
+(def TV_K 2.0)          ; yaw scalar — tunable from UI
+(def TV_G 0.005)        ; proportional gain — tunable from UI
+(def abs-active 0)
+(def abs-engaged 0)
 
 (defun play-parking-brake-tone (freq) {
     (foc-play-tone 0 freq 1.5)
@@ -19,18 +25,14 @@
 })
 
 (defun send-state-to-ui () {
-    (var buf (bufcreate 2))
-    (bufset-u8 buf 0 CMD_SET_PARKING_BRAKE)
-    (bufset-u8 buf 1 parking-brake-active)
-    (send-data buf)
-})
-
-(defun send-tv-state-to-ui () {
-    (var buf (bufcreate 6))
+    (var buf (bufcreate 9))
     (bufset-u8 buf 0 CMD_TV_STATE)
-    (bufset-u8 buf 1 torque-vector-active)
-    (bufset-i16 buf 2 tv-left-pct)
-    (bufset-i16 buf 4 tv-right-pct)
+    (bufset-u8 buf 1 parking-brake-active)
+    (bufset-u8 buf 2 torque-vector-active)
+    (bufset-i16 buf 3 tv-left-pct)
+    (bufset-i16 buf 5 tv-right-pct)
+    (bufset-u8 buf 7 abs-active)
+    (bufset-u8 buf 8 abs-engaged)
     (send-data buf)
 })
 
@@ -41,6 +43,13 @@
     )
     (if (= cmd CMD_SET_TORQUE_VECTOR)
         (setq torque-vector-active (bufget-u8 data 1))
+    )
+    (if (= cmd CMD_SET_TV_PARAMS) {
+        (setq TV_K (/ (bufget-i16 data 1) 10.0))
+        (setq TV_G (/ (bufget-i16 data 3) 10000.0))
+    })
+    (if (= cmd CMD_SET_ABS)
+        (setq abs-active (bufget-u8 data 1))
     )
 })
 
@@ -79,7 +88,6 @@
 (spawn (fn ()
     (loopwhile t {
         (send-state-to-ui)
-        (send-tv-state-to-ui)
         (sleep 0.1)
     })
 ))
@@ -89,21 +97,29 @@
     (var MASTER_CAN_ID 2)
     (var BRAKE_MAX_SPEED 0.3)    ; m/s — max speed to allow activation
     (var BRAKE_MAX_CURRENT 30.0)  ; A
-    (var BRAKE_DT 0.05)          ; s — main loop period
+    (var LOOP_DT 0.05)          ; s — main loop period
     (var BRAKE_RPM_DEADBAND 10.0); RPM — ignore hall noise below this
     (var BRAKE_PITCH_GAIN 15)   ; A/rad — feedforward from slope, tune for board weight
     (var BRAKE_KP 0.01)         ; A/RPM — velocity damping, reduces oscillation
     (var BRAKE_KI 0.02)         ; A/(RPM*s) — slow trim on top of feedforward
-    (var TV_THROTTLE_DEADBAND 0.15) ; matches remote deadband
+    (var THROTTLE_DEADBAND 0.15) ; matches remote deadband
     (var TV_MIN_ROLL 0.1)       ; rad — minimum lean to apply differential
     (var TV_MAX_SPEED 7.0)      ; m/s — differential disabled above this speed
-    (var TV_K 2.0)              ; yaw scalar (inflate slightly to detect understeer)
-    (var TV_G 0.005)            ; 1/(deg/s) — proportional gain on yaw error (relative units)
-    (var TV_MAX_DELTA 0.7)      ; max delta as a fraction of intended current (0.5 = ±50%)
+    (var TV_MAX_DELTA 0.8)      ; max delta as a fraction of intended current (0.5 = ±50%)
     (var TV_SLIP_THRESHOLD 1.7) ; m/s — speed difference between wheels indicating slip
+    (var ABS_THRESHOLD 0.1)      ; m/s — per-wheel speed error to trigger brake release
+    (var ABS_GRIP_MARGIN 2.0)    ; m/s² — allowed excess over IMU decel before trusting IMU
+    (var ABS_SPEED_MIN 1.0)      ; m/s — minimum speed before ABS activates
+    (var ABS_G 9.81)             ; m/s²
+    (var ABS_DECEL_ALPHA 0.5)    ; EMA smoothing for wheel decel (higher = smoother, more lag)
     (var prev-parking-brake-active 0)
     (var pid-integral 0.0)
     (var prev-tv-running 0)
+    (var abs-theoretical-speed 0.0)
+    (var abs-last-highest-speed 0.0)
+    (var abs-filtered-wheel-decel 0.0)
+    (var abs-use-imu 0)
+    (var prev-abs-braking 0)
     (loopwhile t {
 
         ; --- Parking brake state change ---
@@ -128,14 +144,14 @@
 
         ; --- Parking brake hold control ---
         (if (= parking-brake-active 1) {
-            (can-cmd MASTER_CAN_ID "(app-disable-output 200)")
+            (can-cmd MASTER_CAN_ID "(app-disable-output 100)")
             (var pitch (ix (get-imu-rpy) 1))
             (var base-current (* BRAKE_PITCH_GAIN pitch))
 
             (var rpm (get-rpm))
             (var rpm-err (if (< (abs rpm) BRAKE_RPM_DEADBAND) 0.0 (- 0.0 rpm)))
 
-            (setq pid-integral (+ pid-integral (* rpm-err BRAKE_DT)))
+            (setq pid-integral (+ pid-integral (* rpm-err LOOP_DT)))
             (var integral-max (/ BRAKE_MAX_CURRENT BRAKE_KI))
             (if (> pid-integral integral-max) (setq pid-integral integral-max))
             (if (< pid-integral (- 0.0 integral-max)) (setq pid-integral (- 0.0 integral-max)))
@@ -159,7 +175,7 @@
                                  (= parking-brake-active 0)
                                  (> (abs roll) TV_MIN_ROLL)
                                  (< (abs velocity) TV_MAX_SPEED)
-                                 (> throttle TV_THROTTLE_DEADBAND)) 1 0))
+                                 (> throttle THROTTLE_DEADBAND)) 1 0))
 
         (if (not (= tv-running prev-tv-running)) {
             (if (= tv-running 0) {
@@ -171,9 +187,9 @@
         })
 
         (if (= tv-running 1) {
-            (can-cmd MASTER_CAN_ID "(app-disable-output 200)")
+            (can-cmd MASTER_CAN_ID "(app-disable-output 100)")
 
-            (var throttle-scaled (/ (- throttle TV_THROTTLE_DEADBAND) (- 1.0 TV_THROTTLE_DEADBAND)))
+            (var throttle-scaled (/ (- throttle THROTTLE_DEADBAND) (- 1.0 THROTTLE_DEADBAND)))
             (var yaw-rate (ix (get-imu-gyro) 2))
             (var target-yaw (* velocity roll TV_K))
             (var yaw-error (- target-yaw yaw-rate))
@@ -196,7 +212,88 @@
             (setq tv-right-pct (* (/ right-rel throttle-scaled) 100))
         })
 
-        (sleep BRAKE_DT)
+        ; --- ABS ---
+        (var abs-braking (if (and (= abs-active 1) (< throttle (- 0.0 THROTTLE_DEADBAND))) 1 0))
+        (if (= abs-braking 1) {
+            ; Pitch-corrected IMU deceleration in m/s²
+            (var abs-pitch (ix (get-imu-rpy) 1))
+            (var imu-accel (get-imu-acc))
+            (var ax (ix imu-accel 0))
+            (var az (ix imu-accel 2))
+            ; Z axis should read ~1g when IMU is working — near 0 means unavailable
+            (var imu-ok (> (abs az) 0.5))
+            (var true-vehicle-decel (abs (* ABS_G (- ax (sin abs-pitch)))))
+
+            (if imu-ok {
+            ; Always integrate IMU to keep theoretical speed current
+            (setq abs-theoretical-speed (- abs-theoretical-speed (* true-vehicle-decel LOOP_DT)))
+            (if (< abs-theoretical-speed 0.0) (setq abs-theoretical-speed 0.0))
+
+            ; Rate at which the fastest wheel dropped this tick — filtered to reduce noise
+            (var highest-wheel-speed (if (> (abs left-speed) (abs right-speed))
+                                         (abs left-speed) (abs right-speed)))
+            (var raw-wheel-decel (/ (- abs-last-highest-speed highest-wheel-speed) LOOP_DT))
+            (setq abs-filtered-wheel-decel (+ (* ABS_DECEL_ALPHA abs-filtered-wheel-decel)
+                                               (* (- 1.0 ABS_DECEL_ALPHA) raw-wheel-decel)))
+
+            ; Condition A: sudden violent drop — trigger IMU mode
+            (if (> abs-filtered-wheel-decel (+ true-vehicle-decel ABS_GRIP_MARGIN))
+                (setq abs-use-imu 1)
+                ; Condition B: no sudden drop — but are we still in an active skid?
+                (if (and (= abs-use-imu 1)
+                         (> (- abs-theoretical-speed highest-wheel-speed) ABS_THRESHOLD))
+                    nil  ; still slipping — latch IMU mode
+                    (setq abs-use-imu 0)  ; wheel caught up — return to wheel mode
+                )
+            )
+
+            (var predicted-speed (if (= abs-use-imu 1) abs-theoretical-speed highest-wheel-speed))
+
+            ; Anchor theoretical speed to reality whenever wheels are trustworthy
+            (if (= abs-use-imu 0)
+                (setq abs-theoretical-speed highest-wheel-speed)
+            )
+            (setq abs-last-highest-speed highest-wheel-speed)
+
+            ; Per-wheel ABS: release brake if wheel has fallen behind predicted speed
+            (var left-slip  (and (> predicted-speed ABS_SPEED_MIN)
+                                 (> (- predicted-speed (abs left-speed))  ABS_THRESHOLD)))
+            (var right-slip (and (> predicted-speed ABS_SPEED_MIN)
+                                 (> (- predicted-speed (abs right-speed)) ABS_THRESHOLD)))
+
+            ; Proportional brake for the gripping wheel, scaled past the -0.1 deadband
+            (var brake-rel (/ (- (abs throttle) THROTTLE_DEADBAND) (- 1.0 THROTTLE_DEADBAND)))
+
+            (if (or left-slip right-slip) {
+                (if (= abs-engaged 0)
+                    (can-cmd MASTER_CAN_ID "(app-disable-output 100)")
+                )
+                (setq abs-engaged 1)
+                (set-brake-rel    (if left-slip  0.0 brake-rel))
+                (canset-brake-rel MASTER_CAN_ID (if right-slip 0.0 brake-rel))
+            } {
+                (if (= abs-engaged 1)
+                    (can-cmd MASTER_CAN_ID "(app-disable-output 0)")
+                )
+                (setq abs-engaged 0)
+            })
+            }) ; end imu-ok guard
+        } {
+            ; Transition: just stopped braking — reset state once
+            (if (= prev-abs-braking 1) {
+                (if (= abs-engaged 1)
+                    (can-cmd MASTER_CAN_ID "(app-disable-output 0)")
+                )
+                (setq abs-theoretical-speed 0.0)
+                (setq abs-last-highest-speed 0.0)
+                (setq abs-filtered-wheel-decel 0.0)
+                (setq abs-use-imu 0)
+                (setq abs-engaged 0)
+            })
+        })
+        (setq prev-abs-braking abs-braking)
+
+        (sleep LOOP_DT)
     })
 })
 (run-main-loop)
