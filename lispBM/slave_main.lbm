@@ -15,15 +15,15 @@
 (def throttle 0.0)       ; latest throttle from master via CAN
 (def tv-left-pct 0.0)   ; slave motor output as % of intended throttle current
 (def tv-right-pct 0.0)  ; master motor output as % of intended throttle current
-(def TV_K 0.1)          ; yaw scalar — tunable from UI
-(def TV_G 0.001)        ; proportional gain — tunable from UI
+(def TV_K 0.08)         ; yaw scalar — tunable from UI
+(def TV_G 0.0008)       ; proportional gain — tunable from UI
 (def abs-active 0)
 (def abs-engaged-ui 0) ; latched for display — holds high for 500ms after last slip
 (def wobble-active 0)
 (def wobble-detected-ui 0)
 (def WOBBLE_AMP_THRESHOLD 30.0) ; deg/s — tunable from UI
 (def WOBBLE_SCORE_ADD 5.0)      ; tunable from UI
-(def WOBBLE_SCORE_DECAY 0.1)    ; tunable from UI
+(def WOBBLE_SCORE_DECAY 0.05)    ; tunable from UI
 
 (defun play-parking-brake-tone (freq) {
     (foc-play-tone 0 freq 1.5)
@@ -441,7 +441,7 @@
                 })
             })
 
-            (setq wobble-detected-ui (if wobble-triggered 1 0))
+            (setq wobble-detected-ui (if (or wobble-triggered (= wobble-in-control 1)) 1 0))
         } {
             ; Wobble feature disabled — release if we had control
             (if (= wobble-in-control 1) {

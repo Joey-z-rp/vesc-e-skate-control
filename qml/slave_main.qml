@@ -19,15 +19,15 @@ Item {
     property bool torqueVectorActive: false
     property real leftPct: 0.0
     property real rightPct: 0.0
-    property real tvK: 0.1
-    property real tvG: 0.001
+    property real tvK: 0.08
+    property real tvG: 0.0008
     property bool absActive: false
     property bool absEngaged: false
     property bool wobbleActive: false
     property bool wobbleDetected: false
     property real wobbleAmp: 30.0
     property real wobbleScoreAdd: 5.0
-    property real wobbleScoreDecay: 0.1
+    property real wobbleScoreDecay: 0.05
     property real speedMs: 0.0
 
     property int displayLeftPct:  torqueVectorActive ? (leftPct  !== 0 ? leftPct  : 100) : 100
@@ -410,7 +410,7 @@ Item {
                         Layout.fillWidth: true
                         Label { text: "K"; font.pixelSize: 14; color: "#888" }
                         Slider {
-                            from: 0.0; to: 1.0; stepSize: 0.01; value: container.tvK; Layout.fillWidth: true
+                            from: 0.0; to: 0.2; stepSize: 0.01; value: container.tvK; Layout.fillWidth: true
                             onMoved: { container.tvK = value; sendTvParams() }
                         }
                         Label { text: container.tvK.toFixed(2); font.pixelSize: 14 }
@@ -419,7 +419,7 @@ Item {
                         Layout.fillWidth: true
                         Label { text: "G"; font.pixelSize: 14; color: "#888" }
                         Slider {
-                            from: 0.0; to: 0.01; stepSize: 0.0001; value: container.tvG; Layout.fillWidth: true
+                            from: 0.0; to: 0.002; stepSize: 0.0001; value: container.tvG; Layout.fillWidth: true
                             onMoved: { container.tvG = value; sendTvParams() }
                         }
                         Label { text: container.tvG.toFixed(4); font.pixelSize: 14 }
@@ -522,7 +522,7 @@ Item {
                         Layout.fillWidth: true
                         Label { text: "Decay"; font.pixelSize: 14; color: "#888" }
                         Slider {
-                            from: 0; to: 2; stepSize: 0.01; value: container.wobbleScoreDecay; Layout.fillWidth: true
+                            from: 0; to: 0.3; stepSize: 0.01; value: container.wobbleScoreDecay; Layout.fillWidth: true
                             onMoved: { container.wobbleScoreDecay = value; sendWobbleParams() }
                         }
                         Label { text: container.wobbleScoreDecay.toFixed(2); font.pixelSize: 14 }
