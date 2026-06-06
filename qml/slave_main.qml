@@ -7,7 +7,10 @@ import Vedder.vesc.commands 1.0
 Item {
     id: container
     anchors.fill: parent
-    anchors.margins: 10
+    anchors.topMargin: 50
+    anchors.leftMargin: 10
+    anchors.rightMargin: 10
+    anchors.bottomMargin: 10
 
     property Commands mCommands: VescIf.commands()
     property bool parkingBrakeActive: false
@@ -18,6 +21,11 @@ Item {
     property real tvG: 0.001
     property bool absActive: false
     property bool absEngaged: false
+    property bool wobbleActive: false
+    property bool wobbleDetected: false
+    property real wobbleAmp: 30.0
+    property real wobbleScoreAdd: 5.0
+    property real wobbleScoreDecay: 0.1
 
     // 100% when TV not applying, actual value when applying
     property int displayLeftPct:  torqueVectorActive ? (leftPct  !== 0 ? leftPct  : 100) : 100
@@ -28,6 +36,24 @@ Item {
         var buffer = new ArrayBuffer(2)
         var dv = new DataView(buffer)
         dv.setUint8(0, 1) // CMD_SET_PARKING_BRAKE
+        dv.setUint8(1, active ? 1 : 0)
+        mCommands.sendCustomAppData(buffer)
+    }
+
+    function sendWobbleParams() {
+        var buffer = new ArrayBuffer(7)
+        var dv = new DataView(buffer)
+        dv.setUint8(0, 9) // CMD_SET_WOBBLE_PARAMS
+        dv.setInt16(1, Math.round(container.wobbleAmp * 10))
+        dv.setInt16(3, Math.round(container.wobbleScoreAdd * 10))
+        dv.setInt16(5, Math.round(container.wobbleScoreDecay * 100))
+        mCommands.sendCustomAppData(buffer)
+    }
+
+    function sendWobbleCmd(active) {
+        var buffer = new ArrayBuffer(2)
+        var dv = new DataView(buffer)
+        dv.setUint8(0, 8) // CMD_SET_WOBBLE
         dv.setUint8(1, active ? 1 : 0)
         mCommands.sendCustomAppData(buffer)
     }
@@ -70,6 +96,8 @@ Item {
             container.rightPct = dv.getInt16(5)
             container.absActive = dv.getUint8(7) !== 0
             container.absEngaged = dv.getUint8(8) !== 0
+            container.wobbleActive = dv.getUint8(9) !== 0
+            container.wobbleDetected = dv.getUint8(10) !== 0
         }
     }
 
@@ -139,6 +167,68 @@ Item {
                     sendAbsCmd(checked)
                 }
             }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            Label {
+                text: "Wobble Control"
+                font.pixelSize: 16
+            }
+
+            Label {
+                text: container.wobbleDetected ? "ACTIVE" : "READY"
+                font.pixelSize: 12
+                font.bold: container.wobbleDetected
+                color: container.wobbleDetected ? "#FF6F00" : "#888"
+            }
+
+            Item { Layout.fillWidth: true }
+
+            Switch {
+                id: wobbleSwitch
+                onToggled: {
+                    container.wobbleActive = checked
+                    sendWobbleCmd(checked)
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Label { text: "Amp"; font.pixelSize: 14; color: "#888" }
+            Slider {
+                from: 0; to: 200; stepSize: 1
+                value: container.wobbleAmp
+                Layout.fillWidth: true
+                onMoved: { container.wobbleAmp = value; sendWobbleParams() }
+            }
+            Label { text: container.wobbleAmp.toFixed(0) + "°/s"; font.pixelSize: 14 }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Label { text: "Add"; font.pixelSize: 14; color: "#888" }
+            Slider {
+                from: 0; to: 20; stepSize: 0.1
+                value: container.wobbleScoreAdd
+                Layout.fillWidth: true
+                onMoved: { container.wobbleScoreAdd = value; sendWobbleParams() }
+            }
+            Label { text: container.wobbleScoreAdd.toFixed(1); font.pixelSize: 14 }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Label { text: "Decay"; font.pixelSize: 14; color: "#888" }
+            Slider {
+                from: 0; to: 2; stepSize: 0.01
+                value: container.wobbleScoreDecay
+                Layout.fillWidth: true
+                onMoved: { container.wobbleScoreDecay = value; sendWobbleParams() }
+            }
+            Label { text: container.wobbleScoreDecay.toFixed(2); font.pixelSize: 14 }
         }
 
         // Wheel visualisation — rear view of the board

@@ -5,6 +5,8 @@
 (def CMD_TV_STATE 5)
 (def CMD_SET_TV_PARAMS 6)
 (def CMD_SET_ABS 7)
+(def CMD_SET_WOBBLE 8)
+(def CMD_SET_WOBBLE_PARAMS 9)
 
 
 ; Globals shared across threads
@@ -17,6 +19,11 @@
 (def TV_G 0.001)        ; proportional gain — tunable from UI
 (def abs-active 0)
 (def abs-engaged-ui 0) ; latched for display — holds high for 500ms after last slip
+(def wobble-active 0)
+(def wobble-detected-ui 0)
+(def WOBBLE_AMP_THRESHOLD 30.0) ; deg/s — tunable from UI
+(def WOBBLE_SCORE_ADD 5.0)      ; tunable from UI
+(def WOBBLE_SCORE_DECAY 0.1)    ; tunable from UI
 
 (defun play-parking-brake-tone (freq) {
     (foc-play-tone 0 freq 1.5)
@@ -25,7 +32,7 @@
 })
 
 (defun send-state-to-ui () {
-    (var buf (bufcreate 9))
+    (var buf (bufcreate 11))
     (bufset-u8 buf 0 CMD_TV_STATE)
     (bufset-u8 buf 1 parking-brake-active)
     (bufset-u8 buf 2 torque-vector-active)
@@ -33,6 +40,8 @@
     (bufset-i16 buf 5 tv-right-pct)
     (bufset-u8 buf 7 abs-active)
     (bufset-u8 buf 8 abs-engaged-ui)
+    (bufset-u8 buf 9 wobble-active)
+    (bufset-u8 buf 10 wobble-detected-ui)
     (send-data buf)
 })
 
@@ -51,6 +60,14 @@
     (if (= cmd CMD_SET_ABS)
         (setq abs-active (bufget-u8 data 1))
     )
+    (if (= cmd CMD_SET_WOBBLE)
+        (setq wobble-active (bufget-u8 data 1))
+    )
+    (if (= cmd CMD_SET_WOBBLE_PARAMS) {
+        (setq WOBBLE_AMP_THRESHOLD (/ (bufget-i16 data 1) 10.0))
+        (setq WOBBLE_SCORE_ADD     (/ (bufget-i16 data 3) 10.0))
+        (setq WOBBLE_SCORE_DECAY   (/ (bufget-i16 data 5) 100.0))
+    })
 })
 
 (defun proc-can-data (id data)
@@ -116,6 +133,12 @@
     (var ABS_MIN_BRAKE 0.1)       ; brake factor applied immediately on slip
     (var ABS_MAX_BRAKE 0.6)       ; brake factor cap during wheel recovery
     (var ABS_REAPPLY_RATE 0.05)   ; factor increase per tick when wheel spins back up
+    (var WOBBLE_MIN_LOOPS 2)      ; min half-wave loops (12.5 Hz at 50Hz)
+    (var WOBBLE_MAX_LOOPS 7)      ; max half-wave loops (3.5 Hz at 50Hz)
+    (var WOBBLE_SCORE_TRIGGER 12.0) ; score to flag wobble (~3 consecutive valid half-waves)
+    (var WOBBLE_SPEED_MIN 5.0)    ; m/s — min speed to activate
+    (var WOBBLE_RAMP_RATE 0.01)   ; penalty increase per tick while wobbling
+    (var WOBBLE_MAX_PENALTY 0.4)  ; max current reduction (40%)
     (var prev-parking-brake-active 0)
     (var pid-integral 0.0)
     (var prev-tv-running 0)
@@ -133,6 +156,13 @@
     (var abs-ui-holdoff 0)  ; ticks remaining to keep abs-engaged-ui high
     (var ABS_UI_HOLDOFF_TICKS (/ 0.5 LOOP_DT)) ; 500ms worth of ticks
     (var prev-abs-braking 0)
+    (var wobble-gyro-prev-sign 0)
+    (var wobble-half-wave-loops 0)
+    (var wobble-peak-amp 0.0)
+    (var wobble-score 0.0)
+    (var wobble-penalty 0.0)
+    (var wobble-in-control 0)
+    (var wobble-captured-throttle 0.0)
     (loopwhile t {
 
         ; --- Parking brake state change ---
@@ -347,6 +377,84 @@
             })
         })
         (setq prev-abs-braking abs-braking)
+
+        ; --- Speed wobble detection & control ---
+        (if (= wobble-active 1) {
+            (var gyro-x (ix (get-imu-gyro) 0))
+            (var gyro-sign (if (>= gyro-x 0.0) 1 -1))
+
+            ; Track peak amplitude and loop count for this half-wave
+            (if (> (abs gyro-x) wobble-peak-amp) (setq wobble-peak-amp (abs gyro-x)))
+            (setq wobble-half-wave-loops (+ wobble-half-wave-loops 1))
+
+            ; Decay score each tick — valid events must add faster than decay removes
+            (setq wobble-score (- wobble-score WOBBLE_SCORE_DECAY))
+            (if (< wobble-score 0.0) (setq wobble-score 0.0))
+
+            ; Zero-crossing: evaluate completed half-wave
+            (if (and (not (= wobble-gyro-prev-sign 0))
+                     (not (= gyro-sign wobble-gyro-prev-sign))) {
+                (if (and (>= wobble-half-wave-loops WOBBLE_MIN_LOOPS)
+                         (<= wobble-half-wave-loops WOBBLE_MAX_LOOPS)
+                         (> wobble-peak-amp WOBBLE_AMP_THRESHOLD)
+                         (> (abs velocity) WOBBLE_SPEED_MIN)) {
+                    (setq wobble-score (+ wobble-score WOBBLE_SCORE_ADD))
+                    (if (> wobble-score WOBBLE_SCORE_TRIGGER) (setq wobble-score WOBBLE_SCORE_TRIGGER))
+                })
+                (setq wobble-half-wave-loops 0)
+                (setq wobble-peak-amp 0.0)
+            })
+            (setq wobble-gyro-prev-sign gyro-sign)
+
+            ; Control: take over when triggered, hold after wobble clears
+            (var wobble-triggered (>= wobble-score WOBBLE_SCORE_TRIGGER))
+            ; Compute throttle-scaled once — used for both capture and release
+            (var throttle-scaled (if (> throttle THROTTLE_DEADBAND)
+                                     (/ (- throttle THROTTLE_DEADBAND) (- 1.0 THROTTLE_DEADBAND))
+                                     0.0))
+
+            (if wobble-triggered {
+                (if (= wobble-in-control 0) {
+                    ; Capture throttle at the moment control is taken
+                    (setq wobble-in-control 1)
+                    (setq wobble-captured-throttle throttle-scaled)
+                })
+                (setq wobble-penalty (+ wobble-penalty WOBBLE_RAMP_RATE))
+                (if (> wobble-penalty WOBBLE_MAX_PENALTY) (setq wobble-penalty WOBBLE_MAX_PENALTY))
+                (setq wobble-detected-ui 1)
+            })
+
+            (if (= wobble-in-control 1) {
+                (can-cmd MASTER_CAN_ID "(app-disable-output 100)")
+                (var max-output (- wobble-captured-throttle wobble-penalty))
+                (if (< max-output 0.0) (setq max-output 0.0))
+                (if (<= throttle-scaled max-output) {
+                    ; Rider backed off to/below penalized level — release
+                    (can-cmd MASTER_CAN_ID "(app-disable-output 0)")
+                    (setq wobble-in-control 0)
+                    (setq wobble-penalty 0.0)
+                } {
+                    ; Cap throttle at captured - penalty; rider cannot exceed this
+                    (set-current-rel max-output)
+                    (canset-current-rel MASTER_CAN_ID max-output)
+                })
+            })
+
+            (setq wobble-detected-ui (if wobble-triggered 1 0))
+        } {
+            ; Wobble feature disabled — release if we had control
+            (if (= wobble-in-control 1) {
+                (can-cmd MASTER_CAN_ID "(app-disable-output 0)")
+                (setq wobble-in-control 0)
+                (setq wobble-penalty 0.0)
+                (setq wobble-captured-throttle 0.0)
+            })
+            (setq wobble-score 0.0)
+            (setq wobble-gyro-prev-sign 0)
+            (setq wobble-half-wave-loops 0)
+            (setq wobble-peak-amp 0.0)
+            (setq wobble-detected-ui 0)
+        })
 
         (sleep LOOP_DT)
     })
