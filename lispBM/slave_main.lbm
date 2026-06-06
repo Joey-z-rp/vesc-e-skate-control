@@ -147,8 +147,7 @@
     (var abs-last-highest-speed 0.0)
     (var abs-filtered-wheel-decel 0.0)
     (var abs-engaged 0)
-    (var abs-left-factor 0.1)
-    (var abs-right-factor 0.1)
+    (var abs-brake-factor 0.1)
     (var abs-last-left-speed 0.0)
     (var abs-last-right-speed 0.0)
     (var abs-filtered-left-accel 0.0)
@@ -315,34 +314,29 @@
             (setq abs-filtered-right-accel (+ (* ABS_DECEL_ALPHA abs-filtered-right-accel)
                                                (* (- 1.0 ABS_DECEL_ALPHA) raw-right-accel)))
 
-            ; Snap factor down on slip; ramp up toward ABS_MAX_BRAKE when recovering
-            (if left-slip {
-                (if (> abs-filtered-left-accel 0.0) {
-                    (setq abs-left-factor (+ abs-left-factor ABS_REAPPLY_RATE))
-                    (if (> abs-left-factor ABS_MAX_BRAKE) (setq abs-left-factor ABS_MAX_BRAKE))
+            ; Single factor for both wheels — ramp up if either wheel is recovering
+            (var any-slip (or left-slip right-slip))
+            (if any-slip {
+                (var recovering (or (> abs-filtered-left-accel 0.0)
+                                    (> abs-filtered-right-accel 0.0)))
+                (if recovering {
+                    (setq abs-brake-factor (+ abs-brake-factor ABS_REAPPLY_RATE))
+                    (if (> abs-brake-factor ABS_MAX_BRAKE) (setq abs-brake-factor ABS_MAX_BRAKE))
                 } {
-                    (setq abs-left-factor ABS_MIN_BRAKE)
-                })
-            })
-            (if right-slip {
-                (if (> abs-filtered-right-accel 0.0) {
-                    (setq abs-right-factor (+ abs-right-factor ABS_REAPPLY_RATE))
-                    (if (> abs-right-factor ABS_MAX_BRAKE) (setq abs-right-factor ABS_MAX_BRAKE))
-                } {
-                    (setq abs-right-factor ABS_MIN_BRAKE)
+                    (setq abs-brake-factor ABS_MIN_BRAKE)
                 })
             })
 
-            ; Hold control while any wheel hasn't yet caught up to predicted speed
-            (if (or left-slip right-slip) {
+            ; Apply same factor to both wheels — symmetric braking prevents truck shake
+            (if any-slip {
                 (if (= abs-engaged 0)
                     (can-cmd MASTER_CAN_ID "(app-disable-output 100)")
                 )
                 (setq abs-engaged 1)
                 (setq abs-engaged-ui 1)
                 (setq abs-ui-holdoff ABS_UI_HOLDOFF_TICKS)
-                (set-brake-rel    (if left-slip  (* abs-left-factor  brake-rel) brake-rel))
-                (canset-brake-rel MASTER_CAN_ID (if right-slip (* abs-right-factor brake-rel) brake-rel))
+                (set-brake-rel    (* abs-brake-factor brake-rel))
+                (canset-brake-rel MASTER_CAN_ID (* abs-brake-factor brake-rel))
             } {
                 ; Both wheels caught up — release control back to remote
                 (if (= abs-engaged 1)
