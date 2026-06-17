@@ -8,6 +8,13 @@
 (def CMD_SET_PARKING_BRAKE 1)
 (def CMD_TOGGLE_PARKING_BRAKE 2)
 (def CMD_THROTTLE 4)
+(def CMD_MASTER_STATE 10)
+(def CMD_VIRTUAL_THROTTLE 11)
+
+; Virtual throttle disabled if UI goes silent for this many seconds
+(def VIRT_TIMEOUT 0.5)
+(def VIRT_MAX 0.4)
+(def VIRT_BRAKE_MAX 1.0)
 
 (def throttle 0)
 (def prev-throttle 0)
@@ -15,6 +22,12 @@
 (def last-brake-gesture-time -1)
 (def brake-release-armed 1)
 (def gesture-vol 0)
+
+(def virt-enabled 0)
+(def virt-throttle 0.0)
+(def virt-master-en 1)
+(def virt-slave-en 1)
+(def last-virt-rx (systime))
 
 (defun in-gesture-band (val)
     (and (>= val GESTURE-LO) (<= val GESTURE-HI))
@@ -82,17 +95,94 @@
         })
 })
 
+; ── Virtual throttle UI protocol ──────────────────────────────────────────────
+
+; CMD_MASTER_STATE (10): u8 cmd | i16 speed×100 | i16 remoteThrottle×10000
+(defun send-state-to-ui () {
+        (var buf (bufcreate 5))
+        (bufset-u8  buf 0 CMD_MASTER_STATE)
+        ; Use the enabled motor's speed — slave when master is off, master otherwise
+        (var speed (if (= virt-master-en 0) (canget-speed SLAVE_CAN_ID) (get-speed)))
+        (bufset-i16 buf 1 (* speed 100))
+        (bufset-i16 buf 3 (* throttle 10000))
+        (send-data buf)
+})
+
+; CMD_VIRTUAL_THROTTLE (11): u8 cmd | u8 enabled | i16 throttle×10000 | u8 masterEn | u8 slaveEn
+(defun proc-ui-data (data) {
+        (var cmd (bufget-u8 data 0))
+        (if (= cmd CMD_VIRTUAL_THROTTLE) {
+                (setq virt-enabled   (bufget-u8  data 1))
+                (var raw (/ (bufget-i16 data 2) 10000.0))
+                (setq virt-throttle
+                    (if (> raw VIRT_MAX) VIRT_MAX
+                        (if (< raw (- 0.0 VIRT_BRAKE_MAX)) (- 0.0 VIRT_BRAKE_MAX) raw)))
+                (setq virt-master-en (bufget-u8 data 4))
+                (setq virt-slave-en  (bufget-u8 data 5))
+                (setq last-virt-rx   (systime))
+        })
+})
+
+(defun event-handler ()
+    (loopwhile t
+        (recv
+            ((event-data-rx . (? data)) (proc-ui-data data))
+            (_ nil)
+        )
+))
+
+(event-register-handler (spawn event-handler))
+(event-enable 'event-data-rx)
+
+; Broadcast state to QML at 5 Hz, but only while virtual throttle is enabled
+(spawn (fn ()
+    (loopwhile t {
+        (if (= virt-enabled 1) (send-state-to-ui))
+        (sleep 0.2)
+    })
+))
+
+; ── Main throttle loop ────────────────────────────────────────────────────────
+
 (defun throttle-loop () {
         (var tbuf (bufcreate 3))
         (bufset-u8 tbuf 0 CMD_THROTTLE)
+        (var prev-virt-active 0)
         (loopwhile t {
                 (def prev-throttle throttle)
                 (read-throttle)
 
-                ; Forward raw throttle to slave for torque vectoring (i16, scale 10000 = 0.01% resolution)
-                (bufset-i16 tbuf 1 (* throttle 10000))
-                (can-send-sid SLAVE_CAN_ID tbuf)
+                ; Safety: disable virtual throttle if UI goes silent
+                (if (and (= virt-enabled 1) (> (secs-since last-virt-rx) VIRT_TIMEOUT))
+                    (setq virt-enabled 0)
+                )
 
+                ; Virtual throttle takes effect only when real remote is neutral
+                (var remote-neutral (< (abs throttle) GESTURE-LO))
+                (var virt-active (if (and (= virt-enabled 1) remote-neutral) 1 0))
+
+                (if (= virt-active 1) {
+                        ; Keep firmware from fighting LispBM — call every tick while active
+                        (app-disable-output 100)
+                        (if (>= virt-throttle 0.0) {
+                                (if (= virt-master-en 1) (set-current-rel virt-throttle))
+                                (if (= virt-slave-en  1) (canset-current-rel SLAVE_CAN_ID virt-throttle))
+                        } {
+                                (if (= virt-master-en 1) (set-brake-rel (- 0.0 virt-throttle)))
+                                (if (= virt-slave-en  1) (canset-brake-rel SLAVE_CAN_ID (- 0.0 virt-throttle)))
+                        })
+                } {
+                        ; Release firmware on transition out of virtual mode
+                        (if (= prev-virt-active 1)
+                            (app-disable-output 0)
+                        )
+                        ; Normal: forward real throttle to slave LispBM for its control algorithms
+                        (bufset-i16 tbuf 1 (* throttle 10000))
+                        (can-send-sid SLAVE_CAN_ID tbuf)
+                })
+                (setq prev-virt-active virt-active)
+
+                ; Gesture detection runs on raw remote throttle only
                 (if (and (> last-gesture-time 0)
                          (> (secs-since last-gesture-time) GESTURE-WINDOW))
                     (def last-gesture-time -1)
@@ -113,6 +203,7 @@
                     nil
                 )
 
+                ; Brake release tracks real throttle only — virtual mode handles its own motor control
                 (if (< (abs throttle) GESTURE-LO)
                     (def brake-release-armed 1)
                 )
