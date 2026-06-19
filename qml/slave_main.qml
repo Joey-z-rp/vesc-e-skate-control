@@ -120,7 +120,7 @@ Item {
             wobbleSwitch.on = container.wobbleActive
             if (wobbleSwitch.item) wobbleSwitch.item.on = wobbleSwitch.on
             container.wobbleDetected = dv.getUint8(10) !== 0
-            container.speedMs = dv.getInt16(11) / 10.0
+            container.speedMs = dv.getInt16(11) / 100.0
         }
     }
 
@@ -165,11 +165,13 @@ Item {
         spacing: 8
 
         // Speedometer — always visible
-        CustomGaugeV2 {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 160
+        CustomGauge {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredWidth: parent.width / 2
+            Layout.preferredHeight: parent.width / 2
             minimumValue: 0; maximumValue: 60
-            labelStep: 10; tickmarkScale: 1; tickmarkSuffix: ""
+            labelStep: 10; tickmarkScale: 1
+            precision: 1
             unitText: "km/h"; typeText: "Speed"
             value: Math.abs(container.speedMs) * 3.6
         }

@@ -11,12 +11,12 @@
 
 ; Globals shared across threads
 (def parking-brake-active 0)
-(def torque-vector-active 0)
+(def torque-vector-active 1)
 (def throttle 0.0)       ; latest throttle from master via CAN
 (def tv-left-pct 0.0)   ; slave motor output as % of intended throttle current
 (def tv-right-pct 0.0)  ; master motor output as % of intended throttle current
-(def TV_K 0.08)         ; yaw scalar — tunable from UI
-(def TV_G 0.0008)       ; proportional gain — tunable from UI
+(def TV_K 0.07)         ; yaw scalar — tunable from UI
+(def TV_G 0.0007)       ; proportional gain — tunable from UI
 (def abs-active 0)
 (def abs-engaged-ui 0) ; latched for display — holds high for 500ms after last slip
 (def wobble-active 0)
@@ -42,7 +42,7 @@
     (bufset-u8  buf 8  abs-engaged-ui)
     (bufset-u8  buf 9  wobble-active)
     (bufset-u8  buf 10 wobble-detected-ui)
-    (bufset-i16 buf 11 (* (get-speed) 10))
+    (bufset-i16 buf 11 (* (get-speed) 100))
     (send-data buf)
 })
 
