@@ -42,6 +42,22 @@ Item {
     // CMD IDs for master custom app data protocol
     readonly property int cmdMasterState:     10
     readonly property int cmdVirtualThrottle: 11
+    readonly property int cmdToneConfig:      12
+
+    property bool toneExpanded: false
+    property int  toneFreq:     890
+    property real toneVolBase:  3.0
+
+    // Send tone config to master LispBM
+    // Layout: u8 cmd | i16 freq | u8 vol×10
+    function sendToneConfig() {
+        const b = new ArrayBuffer(4)
+        const d = new DataView(b)
+        d.setUint8(0, cmdToneConfig)
+        d.setInt16(1, container.toneFreq)
+        d.setUint8(3, Math.round(container.toneVolBase * 10))
+        mCommands.sendCustomAppData(b)
+    }
 
     // Send virtual throttle state to master LispBM
     // Layout: u8 cmd | u8 enabled | i16 throttle×10000 | u8 masterEn | u8 slaveEn
@@ -270,6 +286,63 @@ Item {
                     return container.virtEffective > 0 ? "#69F0AE" : "#FF5252"
                 }
                 Behavior on color { ColorAnimation { duration: 150 } }
+            }
+        }
+
+        // ── Tone settings (collapsible) ───────────────────────────────
+        Item {
+            Layout.fillWidth: true
+            height: 30
+
+            RowLayout {
+                anchors.fill: parent
+                Label { text: "Beep Tone"; font.pixelSize: 13; color: "#888" }
+                Item { Layout.fillWidth: true }
+                Label {
+                    text: container.toneExpanded ? "▲" : "▼"
+                    font.pixelSize: 11; color: "#666"
+                }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: container.toneExpanded = !container.toneExpanded
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: container.toneExpanded
+            spacing: 6
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "Freq"; font.pixelSize: 12; color: "#888"; Layout.preferredWidth: 36 }
+                Slider {
+                    Layout.fillWidth: true
+                    from: 100; to: 2000; stepSize: 10
+                    value: container.toneFreq
+                    onMoved: { container.toneFreq = Math.round(value); container.sendToneConfig() }
+                }
+                Label {
+                    text: container.toneFreq + " Hz"
+                    font.pixelSize: 12; color: "#ccc"; Layout.preferredWidth: 58
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "Vol"; font.pixelSize: 12; color: "#888"; Layout.preferredWidth: 36 }
+                Slider {
+                    Layout.fillWidth: true
+                    from: 0.0; to: 5.0; stepSize: 0.1
+                    value: container.toneVolBase
+                    onMoved: { container.toneVolBase = Math.round(value * 10) / 10; container.sendToneConfig() }
+                }
+                Label {
+                    text: container.toneVolBase.toFixed(1)
+                    font.pixelSize: 12; color: "#ccc"; Layout.preferredWidth: 58
+                }
             }
         }
 

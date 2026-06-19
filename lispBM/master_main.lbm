@@ -2,7 +2,7 @@
 (def GESTURE-HI 0.2)
 (def GESTURE-WINDOW 1.0)
 (def MAX-ERPM 10000.0)
-(def SPEED-VOL-SCALE 2.0)
+(def SPEED-VOL-SCALE 3.0)
 
 (def SLAVE_CAN_ID 3)
 (def CMD_SET_PARKING_BRAKE 1)
@@ -15,6 +15,11 @@
 (def VIRT_TIMEOUT 0.5)
 (def VIRT_MAX 0.4)
 (def VIRT_BRAKE_MAX 1.0)
+
+; Gesture tone — adjustable via UI
+(def CMD_TONE_CONFIG 12)
+(def tone-freq 890)
+(def tone-vol-base 3.0)
 
 (def throttle 0)
 (def prev-throttle 0)
@@ -50,22 +55,20 @@
         (if rs (def throttle (ix rs 0)) nil)
 })
 
-(defun play-tone (ch freq time vol) {
-        (looprange i 0 10 {
-                (setq vol (* vol 0.9))
-                (foc-play-tone ch freq vol)
-                (sleep (/ time 10.0))
-        })
-})
-
 (defun play-gesture-tone () {
         (var rpm-ratio (/ (abs (get-rpm)) MAX-ERPM))
         (var speed-factor (+ 1.0 (* (if (< rpm-ratio 1.0) rpm-ratio 1.0) SPEED-VOL-SCALE)))
-        (setq gesture-vol (* 2 speed-factor))
-        (play-tone 0 349.23 0.2 gesture-vol)
-        (play-tone 0 440 0.2 gesture-vol)
-        (play-tone 0 523.25 0.2 gesture-vol)
-        (play-tone 0 659.25 0.2 gesture-vol)
+        (setq gesture-vol (* tone-vol-base speed-factor))
+        (can-cmd SLAVE_CAN_ID (str-merge
+            "{ (foc-play-tone 0 " (str-from-n tone-freq) " " (str-from-n gesture-vol)
+            ") (sleep 0.3) (foc-play-stop) (sleep 0.1) (foc-play-tone 0 " (str-from-n tone-freq)
+            " " (str-from-n gesture-vol) ") (sleep 0.3) (foc-play-stop) }"))
+        (foc-play-tone 0 tone-freq gesture-vol)
+        (sleep 0.3)
+        (foc-play-stop)
+        (sleep 0.1)
+        (foc-play-tone 0 tone-freq gesture-vol)
+        (sleep 0.3)
         (foc-play-stop)
 })
 
@@ -120,6 +123,10 @@
                 (setq virt-master-en (bufget-u8 data 4))
                 (setq virt-slave-en  (bufget-u8 data 5))
                 (setq last-virt-rx   (systime))
+        })
+        (if (= cmd CMD_TONE_CONFIG) {
+                (setq tone-freq     (bufget-i16 data 1))
+                (setq tone-vol-base (/ (bufget-u8 data 3) 10.0))
         })
 })
 
