@@ -19,8 +19,8 @@ Item {
     property bool torqueVectorActive: false
     property real leftPct: 0.0
     property real rightPct: 0.0
-    property real tvK: 0.08
-    property real tvG: 0.0008
+    property real tvK: 0.07
+    property real tvG: 0.0007
     property bool absActive: false
     property bool absEngaged: false
     property bool wobbleActive: false

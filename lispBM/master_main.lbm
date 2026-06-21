@@ -16,6 +16,12 @@
 (def VIRT_MAX 0.4)
 (def VIRT_BRAKE_MAX 1.0)
 
+; Speed limit
+(def CMD_SPEED_LIMIT 13)
+(def CMD_SPEED_LIMITING_SLAVE 11)
+(def SPEED_LIMIT_MS (/ 25.0 3.6))
+(def THROTTLE_DEADBAND 0.15)
+
 ; Gesture tone — adjustable via UI
 (def CMD_TONE_CONFIG 12)
 (def tone-freq 890)
@@ -27,6 +33,10 @@
 (def last-brake-gesture-time -1)
 (def brake-release-armed 1)
 (def gesture-vol 0)
+
+(def speed-limit-active 1)
+(def speed-limiting 0)
+(def speed-limit-cap 0.0)
 
 (def virt-enabled 0)
 (def virt-throttle 0.0)
@@ -53,6 +63,16 @@
 (defun read-throttle () {
         (var rs (get-remote-state))
         (if rs (def throttle (ix rs 0)) nil)
+})
+
+; Normalize raw remote value to current-space, matching firmware deadband normalization.
+; Works symmetrically for both throttle (positive) and brake (negative).
+(defun norm-throttle (thr) {
+    (if (> thr THROTTLE_DEADBAND)
+        (/ (- thr THROTTLE_DEADBAND) (- 1.0 THROTTLE_DEADBAND))
+        (if (< thr (- 0.0 THROTTLE_DEADBAND))
+            (/ (+ thr THROTTLE_DEADBAND) (- 1.0 THROTTLE_DEADBAND))
+            0.0))
 })
 
 (defun play-gesture-tone () {
@@ -128,6 +148,9 @@
                 (setq tone-freq     (bufget-i16 data 1))
                 (setq tone-vol-base (/ (bufget-u8 data 3) 10.0))
         })
+        (if (= cmd CMD_SPEED_LIMIT)
+            (setq speed-limit-active (bufget-u8 data 1))
+        )
 })
 
 (defun event-handler ()
@@ -168,22 +191,60 @@
                 (var remote-neutral (< (abs throttle) GESTURE-LO))
                 (var virt-active (if (and (= virt-enabled 1) remote-neutral) 1 0))
 
+                ; Speed limit governor
+                (var was-limiting speed-limiting)
+                (var avg-speed (/ (+ (get-speed) (canget-speed SLAVE_CAN_ID)) 2.0))
+                (setq speed-limiting (if (and (= speed-limit-active 1)
+                                              (>= (abs avg-speed) SPEED_LIMIT_MS)) 1 0))
+                ; Notify slave of speed-limiting state change on transitions
+                (if (not (= was-limiting speed-limiting)) {
+                    (var slbuf (bufcreate 2))
+                    (bufset-u8 slbuf 0 CMD_SPEED_LIMITING_SLAVE)
+                    (bufset-u8 slbuf 1 speed-limiting)
+                    (can-send-sid SLAVE_CAN_ID slbuf)
+                })
+                (if (= speed-limiting 1) {
+                        ; Seed cap in current-space on first tick over limit
+                        (if (= was-limiting 0)
+                            (setq speed-limit-cap (if (= virt-active 1)
+                                (if (> virt-throttle 0.0) virt-throttle 0.0)
+                                (norm-throttle throttle)))
+                        )
+                        (setq speed-limit-cap (- speed-limit-cap 0.005))
+                        (if (< speed-limit-cap 0.0) (setq speed-limit-cap 0.0))
+                })
+
                 (if (= virt-active 1) {
-                        ; Keep firmware from fighting LispBM — call every tick while active
                         (app-disable-output 100)
-                        (if (>= virt-throttle 0.0) {
-                                (if (= virt-master-en 1) (set-current-rel virt-throttle))
-                                (if (= virt-slave-en  1) (canset-current-rel SLAVE_CAN_ID virt-throttle))
+                        (var eff-virt (if (and (= speed-limiting 1) (> virt-throttle 0.0))
+                                          (if (< virt-throttle speed-limit-cap) virt-throttle speed-limit-cap)
+                                          virt-throttle))
+                        (if (>= eff-virt 0.0) {
+                                (if (= virt-master-en 1) (set-current-rel eff-virt))
+                                (if (= virt-slave-en  1) (canset-current-rel SLAVE_CAN_ID eff-virt))
                         } {
-                                (if (= virt-master-en 1) (set-brake-rel (- 0.0 virt-throttle)))
-                                (if (= virt-slave-en  1) (canset-brake-rel SLAVE_CAN_ID (- 0.0 virt-throttle)))
+                                (if (= virt-master-en 1) (set-brake-rel (- 0.0 eff-virt)))
+                                (if (= virt-slave-en  1) (canset-brake-rel SLAVE_CAN_ID (- 0.0 eff-virt)))
                         })
                 } {
-                        ; Release firmware on transition out of virtual mode
-                        (if (= prev-virt-active 1)
+                        ; Release firmware on transition out of virtual mode or speed limiting
+                        (if (or (= prev-virt-active 1) (and (= was-limiting 1) (= speed-limiting 0)))
                             (app-disable-output 0)
                         )
-                        ; Normal: forward real throttle to slave LispBM for its control algorithms
+                        (if (= speed-limiting 1) {
+                                (var thr-norm (norm-throttle throttle))
+                                (var eff-throttle (if (> thr-norm 0.0)
+                                                     (if (< thr-norm speed-limit-cap) thr-norm speed-limit-cap)
+                                                     thr-norm))
+                                (app-disable-output 100)
+                                (if (>= eff-throttle 0.0) {
+                                    (set-current-rel eff-throttle)
+                                    (canset-current-rel SLAVE_CAN_ID eff-throttle)
+                                } {
+                                    (set-brake-rel (- 0.0 eff-throttle))
+                                    (canset-brake-rel SLAVE_CAN_ID (- 0.0 eff-throttle))
+                                })
+                        })
                         (bufset-i16 tbuf 1 (* throttle 10000))
                         (can-send-sid SLAVE_CAN_ID tbuf)
                 })

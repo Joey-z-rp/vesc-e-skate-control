@@ -43,10 +43,22 @@ Item {
     readonly property int cmdMasterState:     10
     readonly property int cmdVirtualThrottle: 11
     readonly property int cmdToneConfig:      12
+    readonly property int cmdSpeedLimit:      13
 
+    property bool speedLimitEnabled: true
     property bool toneExpanded: false
     property int  toneFreq:     890
     property real toneVolBase:  3.0
+
+    // Send speed limit state to master LispBM
+    // Layout: u8 cmd | u8 enabled
+    function sendSpeedLimit() {
+        const b = new ArrayBuffer(2)
+        const d = new DataView(b)
+        d.setUint8(0, cmdSpeedLimit)
+        d.setUint8(1, container.speedLimitEnabled ? 1 : 0)
+        mCommands.sendCustomAppData(b)
+    }
 
     // Send tone config to master LispBM
     // Layout: u8 cmd | i16 freq | u8 vol×10
@@ -138,6 +150,30 @@ Item {
             precision: 1
             unitText: "km/h"; typeText: "Speed"
             value: Math.abs(container.speedMs) * 3.6
+        }
+
+        // ── Speed limit toggle ────────────────────────────────────────
+        RowLayout {
+            Layout.fillWidth: true
+
+            Label { text: "25 km/h Limit"; font.pixelSize: 16 }
+
+            Item { Layout.fillWidth: true }
+
+            Loader {
+                id: speedLimitSwitch
+                sourceComponent: toggleComponent
+                property bool on: true
+                onLoaded: {
+                    item.on = speedLimitSwitch.on
+                    item.onColor = "#2196F3"
+                    item.toggled.connect(function(state) {
+                        speedLimitSwitch.on = state
+                        container.speedLimitEnabled = state
+                        container.sendSpeedLimit()
+                    })
+                }
+            }
         }
 
         // ── Virtual throttle header row ───────────────────────────────
